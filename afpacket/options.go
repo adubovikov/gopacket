@@ -126,6 +126,7 @@ type options struct {
 	version        OptTPacketVersion
 	socktype       OptSocketType
 	iface          string
+	ifaceIdx       int
 }
 
 var defaultOpts = options{
