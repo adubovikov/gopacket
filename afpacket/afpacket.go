@@ -135,20 +135,20 @@ type TPacket struct {
 
 var _ gopacket.ZeroCopyPacketDataSource = &TPacket{}
 
-// bindToInterface binds the TPacket socket to a particular named interface.
-func (h *TPacket) bindToInterface(ifaceName string) error {
-	ifIndex := 0
+// bindToInterface binds the TPacket socket to the configured interface.
+func (h *TPacket) bindToInterface() error {
+	h.opts.ifaceIdx = 0
 	// An empty string here means to listen to all interfaces
-	if ifaceName != "" {
-		iface, err := net.InterfaceByName(ifaceName)
+	if h.opts.iface != "" {
+		iface, err := net.InterfaceByName(h.opts.iface)
 		if err != nil {
 			return fmt.Errorf("InterfaceByName: %v", err)
 		}
-		ifIndex = iface.Index
+		h.opts.ifaceIdx = iface.Index
 	}
 	s := &unix.SockaddrLinklayer{
 		Protocol: htons(uint16(unix.ETH_P_ALL)),
-		Ifindex:  ifIndex,
+		Ifindex:  h.opts.ifaceIdx,
 	}
 	return unix.Bind(h.fd, s)
 }
@@ -242,7 +242,7 @@ func NewTPacket(opts ...interface{}) (h *TPacket, err error) {
 		return nil, err
 	}
 	h.fd = fd
-	if err = h.bindToInterface(h.opts.iface); err != nil {
+	if err = h.bindToInterface(); err != nil {
 		goto errlbl
 	}
 	if err = h.setRequestedTPacketVersion(); err != nil {
@@ -277,6 +277,26 @@ func (h *TPacket) SetBPF(filter []bpf.RawInstruction) error {
 // attach ebpf filter to af-packet
 func (h *TPacket) SetEBPF(progFd int32) error {
 	return setsockopt(h.fd, unix.SOL_SOCKET, unix.SO_ATTACH_BPF, unsafe.Pointer(&progFd), 4)
+}
+
+// SetPromiscuous sets promiscous mode to the required value. If it is
+// enabled, traffic not destined for the interface will also be
+// captured.
+//
+// Non empty OptInterface options is required, otherwise an error is returned.
+func (h *TPacket) SetPromiscuous(on bool) error {
+	if h.opts.ifaceIdx == 0 {
+		return errors.New("SetPromiscuous needs non empty OptInterface option")
+	}
+	mreq := unix.PacketMreq{
+		Ifindex: int32(h.opts.ifaceIdx),
+		Type:    unix.PACKET_MR_PROMISC,
+	}
+	opt := unix.PACKET_DROP_MEMBERSHIP
+	if on {
+		opt = unix.PACKET_ADD_MEMBERSHIP
+	}
+	return unix.SetsockoptPacketMreq(h.fd, unix.SOL_PACKET, opt, &mreq)
 }
 
 func (h *TPacket) releaseCurrentPacket() error {
